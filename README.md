@@ -1,10 +1,10 @@
 # viper-aws
 
-# Usage
+## Usage
 
 Examples:
 * [Basic](examples/basic/main.go)
 
-# Remote Providers
+## Remote Providers
 
 * [AWS Secrets](secrets/)
