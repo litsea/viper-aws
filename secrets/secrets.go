@@ -25,6 +25,7 @@ var ErrAwsSecretsEmptyValue = errors.New("AWS Secrets value is empty")
 
 // Provider implements reads configuration from Hashicorp Vault.
 type Provider struct {
+	clt           *secretsmanager.Client
 	region        string
 	secretID      string
 	accessKey     string
@@ -39,7 +40,7 @@ type Provider struct {
 }
 
 // NewConfigProvider returns a new Provider.
-func NewConfigProvider(opts ...Option) *Provider {
+func NewConfigProvider(opts ...Option) (*Provider, error) {
 	p := &Provider{
 		region:        "us-east-1",
 		keepStages:    10,
@@ -57,7 +58,26 @@ func NewConfigProvider(opts ...Option) *Provider {
 		p.region = r
 	}
 
-	return p
+	awsOpts := []func(*config.LoadOptions) error{
+		config.WithRegion(p.region),
+	}
+
+	if p.accessKey != "" && p.secretKey != "" {
+		cred := aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(
+			p.accessKey, p.secretKey, p.sessionToken))
+		awsOpts = append(awsOpts, config.WithCredentialsProvider(cred))
+	}
+
+	awsCfg, err := config.LoadDefaultConfig(context.Background(), awsOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("viperaws.secrets.NewConfigProvider: LoadDefaultConfig %s, %w",
+			p.secretID, err)
+	}
+
+	// Create Secrets Manager client
+	p.clt = secretsmanager.NewFromConfig(awsCfg)
+
+	return p, nil
 }
 
 func (p *Provider) Name() string {
@@ -76,30 +96,6 @@ func (p *Provider) Get(rp viper.RemoteProvider) (io.Reader, error) {
 }
 
 func (p *Provider) get(_ viper.RemoteProvider) (*secretsmanager.GetSecretValueOutput, error) {
-	var (
-		cfg aws.Config
-		err error
-	)
-
-	opts := []func(*config.LoadOptions) error{
-		config.WithRegion(p.region),
-	}
-
-	if p.accessKey != "" && p.secretKey != "" {
-		cred := aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(
-			p.accessKey, p.secretKey, p.sessionToken))
-		opts = append(opts, config.WithCredentialsProvider(cred))
-	}
-
-	cfg, err = config.LoadDefaultConfig(context.Background(), opts...)
-	if err != nil {
-		return nil, fmt.Errorf("viperaws.secrets.Provider.get: LoadDefaultConfig %s, %w",
-			p.secretID, err)
-	}
-
-	// Create Secrets Manager client
-	svc := secretsmanager.NewFromConfig(cfg)
-
 	// VersionStage defaults to AWSCURRENT if unspecified
 	input := &secretsmanager.GetSecretValueInput{
 		SecretId:     aws.String(p.secretID),
@@ -107,7 +103,7 @@ func (p *Provider) get(_ viper.RemoteProvider) (*secretsmanager.GetSecretValueOu
 	}
 
 	// IAM policy: secretsmanager:GetSecretValue
-	result, err := svc.GetSecretValue(context.Background(), input)
+	result, err := p.clt.GetSecretValue(context.Background(), input)
 	if err != nil {
 		// For a list of exceptions thrown, see
 		// https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html
@@ -126,8 +122,8 @@ func (p *Provider) get(_ viper.RemoteProvider) (*secretsmanager.GetSecretValueOu
 	// secretsmanager:
 	stg := result.CreatedDate.Format("v2006.0102.150405")
 	if !slices.Contains(result.VersionStages, stg) {
-		p.cleanVersionStages(svc)
-		p.updateSecretStage(svc, secretsmanager.UpdateSecretVersionStageInput{
+		p.cleanVersionStages()
+		p.updateSecretStage(secretsmanager.UpdateSecretVersionStageInput{
 			SecretId:        aws.String(p.secretID),
 			MoveToVersionId: result.VersionId,
 			VersionStage:    aws.String(stg),
@@ -137,12 +133,12 @@ func (p *Provider) get(_ viper.RemoteProvider) (*secretsmanager.GetSecretValueOu
 	return result, nil
 }
 
-func (p *Provider) cleanVersionStages(svc *secretsmanager.Client) {
+func (p *Provider) cleanVersionStages() {
 	in := secretsmanager.ListSecretVersionIdsInput{
 		SecretId:   aws.String(p.secretID),
 		MaxResults: aws.Int32(100),
 	}
-	out, err := svc.ListSecretVersionIds(context.Background(), &in)
+	out, err := p.clt.ListSecretVersionIds(context.Background(), &in)
 	if err != nil {
 		p.l.Warn("viperaws.secrets.Provider.cleanVersionStages: ListSecretVersionIds",
 			"secretID", p.secretID, "err", err)
@@ -180,7 +176,7 @@ func (p *Provider) cleanVersionStages(svc *secretsmanager.Client) {
 		}
 
 		for _, stg := range v.VersionStages {
-			p.updateSecretStage(svc, secretsmanager.UpdateSecretVersionStageInput{
+			p.updateSecretStage(secretsmanager.UpdateSecretVersionStageInput{
 				SecretId:            aws.String(p.secretID),
 				RemoveFromVersionId: v.VersionId,
 				VersionStage:        aws.String(stg),
@@ -189,10 +185,8 @@ func (p *Provider) cleanVersionStages(svc *secretsmanager.Client) {
 	}
 }
 
-func (p *Provider) updateSecretStage(
-	svc *secretsmanager.Client, in secretsmanager.UpdateSecretVersionStageInput,
-) {
-	_, err := svc.UpdateSecretVersionStage(context.Background(), &in)
+func (p *Provider) updateSecretStage(in secretsmanager.UpdateSecretVersionStageInput) {
+	_, err := p.clt.UpdateSecretVersionStage(context.Background(), &in)
 	msg := "viperaws.secrets.Provider.updateSecretStage: "
 	if in.MoveToVersionId != nil {
 		msg += "add new stage"

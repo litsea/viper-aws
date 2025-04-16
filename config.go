@@ -58,12 +58,15 @@ func NewSecrets(v *viper.Viper, sid string, vos []Option, pos []secrets.Option) 
 	pos = append(pos,
 		secrets.WithSecretID(sid),
 	)
-	p := secrets.NewConfigProvider(pos...)
+	p, err := secrets.NewConfigProvider(pos...)
+	if err != nil {
+		return nil, fmt.Errorf("viperaws.NewSecrets: NewConfigProvider, %w", err)
+	}
 
 	vos = append(vos, WithProvider(p))
 
 	cfg := New(v, vos...)
-	err := cfg.Read()
+	err = cfg.Read()
 	if err != nil {
 		return nil, fmt.Errorf("viperaws.NewSecrets: read failed, %w", err)
 	}
