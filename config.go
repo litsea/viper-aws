@@ -9,12 +9,14 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 
+	"github.com/litsea/viper-aws/log"
 	"github.com/litsea/viper-aws/remote"
 	"github.com/litsea/viper-aws/secrets"
 )
 
 type Config struct {
 	v                *viper.Viper
+	l                log.Logger
 	typ              string
 	file             string
 	onFileChangeFunc func(evt fsnotify.Event)
@@ -25,6 +27,7 @@ type Config struct {
 func New(v *viper.Viper, opts ...Option) *Config {
 	c := &Config{
 		v:    v,
+		l:    &log.EmptyLogger{},
 		typ:  "yaml",
 		file: "./app.yaml",
 	}
@@ -45,7 +48,7 @@ func NewFile(v *viper.Viper, opts ...Option) (*Config, error) {
 		return nil, fmt.Errorf("viperaws.NewFile: read failed, %w", err)
 	}
 
-	cfg.v.OnConfigChange(cfg.onFileChangeFunc)
+	cfg.v.OnConfigChange(cfg.OnFileDeDupChangeFn(cfg.onFileChangeFunc))
 	cfg.v.WatchConfig()
 
 	return cfg, nil
@@ -105,7 +108,7 @@ func (c *Config) Read() error {
 // https://github.com/spf13/viper/issues/948
 // https://pkg.go.dev/github.com/fsnotify/fsnotify#Watcher
 // https://github.com/fsnotify/fsnotify/blob/main/cmd/fsnotify/dedup.go
-func OnFileDeDupChangeFn(fn func(evt fsnotify.Event)) func(evt fsnotify.Event) {
+func (c *Config) OnFileDeDupChangeFn(fn func(evt fsnotify.Event)) func(evt fsnotify.Event) {
 	var (
 		// Wait 200ms for new events; each new event resets the timer.
 		waitFor = 200 * time.Millisecond
@@ -123,7 +126,16 @@ func OnFileDeDupChangeFn(fn func(evt fsnotify.Event)) func(evt fsnotify.Event) {
 
 		// No timer yet, so create one.
 		if !ok {
-			t = time.AfterFunc(math.MaxInt64, func() { fn(evt) })
+			t = time.AfterFunc(math.MaxInt64, func() {
+				defer func() {
+					if err := recover(); err != nil {
+						c.l.Error("viperaws.Config.OnFileDeDupChangeFn: recovery form panic",
+							"err", fmt.Errorf("panic error: %v", err))
+					}
+				}()
+
+				fn(evt)
+			})
 			t.Stop()
 
 			mu.Lock()

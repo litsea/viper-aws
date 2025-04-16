@@ -93,7 +93,7 @@ func (p *Provider) get(_ viper.RemoteProvider) (*secretsmanager.GetSecretValueOu
 
 	cfg, err = config.LoadDefaultConfig(context.Background(), opts...)
 	if err != nil {
-		return nil, fmt.Errorf("secrets.Provider.get: LoadDefaultConfig %s, %w",
+		return nil, fmt.Errorf("viperaws.secrets.Provider.get: LoadDefaultConfig %s, %w",
 			p.secretID, err)
 	}
 
@@ -111,12 +111,12 @@ func (p *Provider) get(_ viper.RemoteProvider) (*secretsmanager.GetSecretValueOu
 	if err != nil {
 		// For a list of exceptions thrown, see
 		// https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html
-		return nil, fmt.Errorf("secrets.Provider.get: GetSecretValue %s, %w",
+		return nil, fmt.Errorf("viperaws.secrets.Provider.get: GetSecretValue %s, %w",
 			p.secretID, err)
 	}
 
 	if result == nil || result.SecretString == nil || *result.SecretString == "" {
-		return nil, fmt.Errorf("secrets.Provider.get: %s, %w",
+		return nil, fmt.Errorf("viperaws.secrets.Provider.get: %s, %w",
 			p.secretID, ErrAwsSecretsEmptyValue)
 	}
 	// Max 20 stages
@@ -144,7 +144,7 @@ func (p *Provider) cleanVersionStages(svc *secretsmanager.Client) {
 	}
 	out, err := svc.ListSecretVersionIds(context.Background(), &in)
 	if err != nil {
-		p.l.Warn("secrets.Provider.cleanVersionStages: ListSecretVersionIds",
+		p.l.Warn("viperaws.secrets.Provider.cleanVersionStages: ListSecretVersionIds",
 			"secretID", p.secretID, "err", err)
 		return
 	}
@@ -193,7 +193,7 @@ func (p *Provider) updateSecretStage(
 	svc *secretsmanager.Client, in secretsmanager.UpdateSecretVersionStageInput,
 ) {
 	_, err := svc.UpdateSecretVersionStage(context.Background(), &in)
-	msg := "secrets.Provider.updateSecretStage: "
+	msg := "viperaws.secrets.Provider.updateSecretStage: "
 	if in.MoveToVersionId != nil {
 		msg += "add new stage"
 	} else {
@@ -211,7 +211,7 @@ func (p *Provider) updateSecretStage(
 func (p *Provider) Watch(rp viper.RemoteProvider) (io.Reader, error) {
 	r, err := p.Get(rp)
 	if err != nil {
-		return nil, fmt.Errorf("secrets.Provider.Watch: %s, %w",
+		return nil, fmt.Errorf("viperaws.secrets.Provider.Watch: %s, %w",
 			p.secretID, err)
 	}
 
@@ -219,7 +219,7 @@ func (p *Provider) Watch(rp viper.RemoteProvider) (io.Reader, error) {
 }
 
 func (p *Provider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.RemoteResponse, chan bool) {
-	p.l.Info("secrets.Provider.WatchChannel: start watching...", "secretID", p.secretID)
+	p.l.Info("viperaws.secrets.Provider.WatchChannel: start watching...", "secretID", p.secretID)
 
 	ticker := time.NewTicker(p.watchInterval)
 
@@ -227,12 +227,19 @@ func (p *Provider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.RemoteRe
 	quit := make(chan bool)
 
 	go func() {
+		defer func() {
+			if err := recover(); err != nil {
+				p.l.Error("viperaws.secrets.Provider.WatchChannel: recovery form panic",
+					"err", fmt.Errorf("panic error: %v", err))
+			}
+		}()
+
 		for {
 			select {
 			case <-ticker.C:
 				out, err := p.get(rp)
 				if err != nil {
-					p.l.Error("aws.secrets.Provider.WatchChannel",
+					p.l.Error("viperaws.secrets.Provider.WatchChannel",
 						"secretID", p.secretID, "err", err)
 					continue
 				}
@@ -260,6 +267,6 @@ func (p *Provider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.RemoteRe
 }
 
 func (p *Provider) QuitWatch() {
-	p.l.Info("secrets.Provider.QuitWatch", "secretID", p.secretID)
+	p.l.Info("viperaws.secrets.Provider.QuitWatch", "secretID", p.secretID)
 	p.quit <- true
 }
