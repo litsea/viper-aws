@@ -29,7 +29,7 @@ func main() {
 	//   WithAccessKey()
 	//   WithSecretKey()
 	//   WithSessionToken()
-	p := secrets.NewConfigProvider(
+	p, err := secrets.NewConfigProvider(
 		secrets.WithRegion("us-east-1"),
 		secrets.WithSecretID("/app-a/local/test"),
 		secrets.WithLogger(l),
@@ -38,8 +38,13 @@ func main() {
 				"createdDate", out.CreatedDate)
 		}),
 	)
+	if err != nil {
+		l.Error("init config", "err", err)
+		os.Exit(1)
+	}
+
 	cfg := vp.New(v, vp.WithProvider(p))
-	if err := cfg.Read(); err != nil {
+	if err = cfg.Read(); err != nil {
 		l.Error("init config", "err", err)
 		os.Exit(1)
 	}
