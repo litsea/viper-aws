@@ -2,6 +2,9 @@ package viperaws
 
 import (
 	"fmt"
+	"math"
+	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
@@ -95,4 +98,40 @@ func (c *Config) Read() error {
 	}
 
 	return nil
+}
+
+// OnFileDeDupChangeFn fsnotify may have duplicate events
+// See:
+// https://github.com/spf13/viper/issues/948
+// https://pkg.go.dev/github.com/fsnotify/fsnotify#Watcher
+// https://github.com/fsnotify/fsnotify/blob/main/cmd/fsnotify/dedup.go
+func OnFileDeDupChangeFn(fn func(evt fsnotify.Event)) func(evt fsnotify.Event) {
+	var (
+		// Wait 200ms for new events; each new event resets the timer.
+		waitFor = 200 * time.Millisecond
+
+		// Keep track of the timers, as path → timer.
+		mu     sync.Mutex
+		timers = make(map[string]*time.Timer)
+	)
+
+	return func(evt fsnotify.Event) {
+		// Get timer.
+		mu.Lock()
+		t, ok := timers[evt.Name]
+		mu.Unlock()
+
+		// No timer yet, so create one.
+		if !ok {
+			t = time.AfterFunc(math.MaxInt64, func() { fn(evt) })
+			t.Stop()
+
+			mu.Lock()
+			timers[evt.Name] = t
+			mu.Unlock()
+		}
+
+		// Reset the timer for this path, so it will start from 200ms again.
+		t.Reset(waitFor)
+	}
 }
