@@ -4,10 +4,19 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 
+	"github.com/litsea/viper-aws/log"
 	"github.com/litsea/viper-aws/remote"
 )
 
 type Option func(c *Config)
+
+func WithLogger(l log.Logger) Option {
+	return func(c *Config) {
+		if l != nil {
+			c.l = l
+		}
+	}
+}
 
 func WithType(t string) Option {
 	return func(c *Config) {
