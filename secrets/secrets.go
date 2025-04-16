@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -14,30 +15,37 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	"github.com/spf13/viper"
+
+	"github.com/litsea/viper-aws/log"
 )
 
 var ErrAwsSecretsEmptyValue = errors.New("AWS Secrets value is empty")
 
 // Provider implements reads configuration from Hashicorp Vault.
 type Provider struct {
-	region       string
-	secretID     string
-	accessKey    string
-	secretKey    string
-	sessionToken string
-	versionId    string
-	quit         chan bool
-	l            Logger
-	onChangeFunc func(out *secretsmanager.GetSecretValueOutput)
+	region        string
+	secretID      string
+	accessKey     string
+	secretKey     string
+	sessionToken  string
+	versionId     string
+	keepStages    int
+	watchInterval time.Duration
+	quit          chan bool
+	l             log.Logger
+	onChangeFunc  func(out *secretsmanager.GetSecretValueOutput)
 }
 
 // NewConfigProvider returns a new Provider.
 func NewConfigProvider(opts ...Option) *Provider {
 	p := &Provider{
-		region: "us-east-1",
-		quit:   make(chan bool),
-		l:      &emptyLogger{},
+		region:        "us-east-1",
+		keepStages:    10,
+		watchInterval: 5 * time.Second,
+		quit:          make(chan bool),
+		l:             &log.EmptyLogger{},
 	}
 
 	for _, opt := range opts {
@@ -111,36 +119,109 @@ func (p *Provider) get(_ viper.RemoteProvider) (*secretsmanager.GetSecretValueOu
 		return nil, fmt.Errorf("secrets.Provider.get: %s, %w",
 			p.secretID, ErrAwsSecretsEmptyValue)
 	}
-
+	// Max 20 stages
+	// https://docs.aws.amazon.com/secretsmanager/latest/userguide/reference_limits.html
+	// IAM policy:
+	// secretsmanager:UpdateSecretVersionStage
+	// secretsmanager:
 	stg := result.CreatedDate.Format("v2006.0102.150405")
 	if !slices.Contains(result.VersionStages, stg) {
-		// IAM policy: secretsmanager:UpdateSecretVersionStage
-		in := secretsmanager.UpdateSecretVersionStageInput{
+		p.cleanVersionStages(svc)
+		p.updateSecretStage(svc, secretsmanager.UpdateSecretVersionStageInput{
 			SecretId:        aws.String(p.secretID),
 			MoveToVersionId: result.VersionId,
 			VersionStage:    aws.String(stg),
-		}
-		_, err = svc.UpdateSecretVersionStage(context.Background(), &in)
-		if err != nil {
-			p.l.Warn("secrets.Provider.get: UpdateSecretVersionStage",
-				"secretID", p.secretID, "stage", stg, "err", err)
-		}
+		})
 	}
 
 	return result, nil
 }
 
+func (p *Provider) cleanVersionStages(svc *secretsmanager.Client) {
+	in := secretsmanager.ListSecretVersionIdsInput{
+		SecretId:   aws.String(p.secretID),
+		MaxResults: aws.Int32(100),
+	}
+	out, err := svc.ListSecretVersionIds(context.Background(), &in)
+	if err != nil {
+		p.l.Warn("secrets.Provider.cleanVersionStages: ListSecretVersionIds",
+			"secretID", p.secretID, "err", err)
+		return
+	}
+
+	if len(out.Versions) <= p.keepStages {
+		return
+	}
+
+	vs := out.Versions
+
+	// The output is disorganized
+	slices.SortFunc(vs, func(a, b types.SecretVersionsListEntry) int {
+		if a.CreatedDate == nil || b.CreatedDate == nil {
+			return 0
+		}
+		return cmp.Compare(b.CreatedDate.Unix(), a.CreatedDate.Unix())
+	})
+
+	// Keep current and previous
+	vs = slices.DeleteFunc(vs, func(v types.SecretVersionsListEntry) bool {
+		if len(v.VersionStages) == 0 {
+			return true
+		}
+		return slices.Contains(v.VersionStages, "AWSCURRENT") ||
+			slices.Contains(v.VersionStages, "AWSPREVIOUS")
+	})
+
+	vs = vs[p.keepStages-2:]
+
+	for _, v := range vs {
+		if v.VersionId == nil || len(v.VersionStages) == 0 {
+			continue
+		}
+
+		for _, stg := range v.VersionStages {
+			p.updateSecretStage(svc, secretsmanager.UpdateSecretVersionStageInput{
+				SecretId:            aws.String(p.secretID),
+				RemoveFromVersionId: v.VersionId,
+				VersionStage:        aws.String(stg),
+			})
+		}
+	}
+}
+
+func (p *Provider) updateSecretStage(
+	svc *secretsmanager.Client, in secretsmanager.UpdateSecretVersionStageInput,
+) {
+	_, err := svc.UpdateSecretVersionStage(context.Background(), &in)
+	msg := "secrets.Provider.updateSecretStage: "
+	if in.MoveToVersionId != nil {
+		msg += "add new stage"
+	} else {
+		msg += "delete old stage"
+	}
+
+	if err != nil {
+		p.l.Warn(msg, "secretID", p.secretID, "stage", *in.VersionStage, "err", err)
+		return
+	}
+
+	p.l.Info(msg, "secretID", p.secretID, "stage", *in.VersionStage)
+}
+
 func (p *Provider) Watch(rp viper.RemoteProvider) (io.Reader, error) {
 	r, err := p.Get(rp)
 	if err != nil {
-		return nil, fmt.Errorf("secrets.Provider.Watch: %w", err)
+		return nil, fmt.Errorf("secrets.Provider.Watch: %s, %w",
+			p.secretID, err)
 	}
 
 	return r, nil
 }
 
 func (p *Provider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.RemoteResponse, chan bool) {
-	ticker := time.NewTicker(time.Second * 5)
+	p.l.Info("secrets.Provider.WatchChannel: start watching...", "secretID", p.secretID)
+
+	ticker := time.NewTicker(p.watchInterval)
 
 	ch := make(chan *viper.RemoteResponse)
 	quit := make(chan bool)
@@ -151,7 +232,8 @@ func (p *Provider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.RemoteRe
 			case <-ticker.C:
 				out, err := p.get(rp)
 				if err != nil {
-					p.l.Error("secrets.Provider.WatchChannel", "err", err)
+					p.l.Error("aws.secrets.Provider.WatchChannel",
+						"secretID", p.secretID, "err", err)
 					continue
 				}
 				bs := []byte(*out.SecretString)
@@ -168,12 +250,16 @@ func (p *Provider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.RemoteRe
 				if p.onChangeFunc != nil {
 					p.onChangeFunc(out)
 				}
-			case <-quit:
+			case <-p.quit:
 				ticker.Stop()
-				close(ch)
 				return
 			}
 		}
 	}()
 	return ch, quit
+}
+
+func (p *Provider) QuitWatch() {
+	p.l.Info("secrets.Provider.QuitWatch", "secretID", p.secretID)
+	p.quit <- true
 }

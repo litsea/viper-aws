@@ -3,17 +3,20 @@ package viperaws
 import (
 	"fmt"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 
 	"github.com/litsea/viper-aws/remote"
+	"github.com/litsea/viper-aws/secrets"
 )
 
 type Config struct {
-	v            *viper.Viper
-	typ          string
-	file         string
-	provider     remote.ConfigProvider
-	setDefaultFn func(v *viper.Viper)
+	v                *viper.Viper
+	typ              string
+	file             string
+	onFileChangeFunc func(evt fsnotify.Event)
+	provider         remote.ConfigProvider
+	setDefaultFn     func(v *viper.Viper)
 }
 
 func New(v *viper.Viper, opts ...Option) *Config {
@@ -30,6 +33,41 @@ func New(v *viper.Viper, opts ...Option) *Config {
 	c.v.SetConfigType(c.typ)
 
 	return c
+}
+
+func NewFile(v *viper.Viper, opts ...Option) (*Config, error) {
+	cfg := New(v, opts...)
+	err := cfg.Read()
+	if err != nil {
+		return nil, fmt.Errorf("viperaws.NewFile: read failed, %w", err)
+	}
+
+	cfg.v.OnConfigChange(cfg.onFileChangeFunc)
+	cfg.v.WatchConfig()
+
+	return cfg, nil
+}
+
+func NewSecrets(v *viper.Viper, sid string, vos []Option, pos []secrets.Option) (*Config, error) {
+	pos = append(pos,
+		secrets.WithSecretID(sid),
+	)
+	p := secrets.NewConfigProvider(pos...)
+
+	vos = append(vos, WithProvider(p))
+
+	cfg := New(v, vos...)
+	err := cfg.Read()
+	if err != nil {
+		return nil, fmt.Errorf("viperaws.NewSecrets: read failed, %w", err)
+	}
+
+	err = cfg.v.WatchRemoteConfigOnChannel()
+	if err != nil {
+		return nil, fmt.Errorf("viperaws.NewSecrets: WatchRemoteConfigOnChannel %w", err)
+	}
+
+	return cfg, nil
 }
 
 func (c *Config) V() *viper.Viper {
@@ -54,15 +92,6 @@ func (c *Config) Read() error {
 
 	if c.setDefaultFn != nil {
 		c.setDefaultFn(c.v)
-	}
-
-	if c.provider != nil {
-		err = c.v.WatchRemoteConfigOnChannel()
-		if err != nil {
-			return fmt.Errorf("config.Read: WatchRemoteConfig %w", err)
-		}
-	} else {
-		c.v.WatchConfig()
 	}
 
 	return nil

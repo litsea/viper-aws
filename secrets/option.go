@@ -1,7 +1,11 @@
 package secrets
 
 import (
+	"time"
+
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+
+	"github.com/litsea/viper-aws/log"
 )
 
 type Option func(p *Provider)
@@ -36,7 +40,23 @@ func WithSessionToken(t string) Option {
 	}
 }
 
-func WithLogger(l Logger) Option {
+func WithKeepStages(i int) Option {
+	return func(p *Provider) {
+		if i > 2 && i < 18 {
+			p.keepStages = i
+		}
+	}
+}
+
+func WithWatchInterval(w time.Duration) Option {
+	return func(p *Provider) {
+		if w > time.Second {
+			p.watchInterval = w
+		}
+	}
+}
+
+func WithLogger(l log.Logger) Option {
 	return func(p *Provider) {
 		if l != nil {
 			p.l = l

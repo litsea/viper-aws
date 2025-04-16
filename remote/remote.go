@@ -47,6 +47,7 @@ type ConfigProvider interface {
 	Get(rp viper.RemoteProvider) (io.Reader, error)
 	Watch(rp viper.RemoteProvider) (io.Reader, error)
 	WatchChannel(rp viper.RemoteProvider) (<-chan *viper.RemoteResponse, chan bool)
+	QuitWatch()
 }
 
 // ErrorHandler handles an error occurred in a remote config provider.

@@ -26,6 +26,8 @@ func (p *inMemoryConfigProvider) WatchChannel(rp viper.RemoteProvider) (<-chan *
 	panic("implement me")
 }
 
+func (p *inMemoryConfigProvider) QuitWatch() {}
+
 func TestAddSupportedRemoteProvider(t *testing.T) {
 	AddSupportedRemoteProvider("vault")
 	defer viper.Reset()
