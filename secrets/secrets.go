@@ -87,7 +87,7 @@ func (p *Provider) Name() string {
 }
 
 func (p *Provider) Get(rp viper.RemoteProvider) (io.Reader, error) {
-	result, err := p.get(rp)
+	result, err := p.GetResult(rp)
 	if err != nil {
 		return nil, err
 	}
@@ -97,13 +97,13 @@ func (p *Provider) Get(rp viper.RemoteProvider) (io.Reader, error) {
 	return strings.NewReader(*result.SecretString), nil
 }
 
-// Get the secret values, will also update the version stages
+// GetResult Get the secret values, will also update the version stages
 //
 // Required IAM policy:
 // Get the value: secretsmanager:GetSecretValue
 // Update the version stages: secretsmanager:ListSecretVersionIds,
 // secretsmanager:UpdateSecretVersionStage
-func (p *Provider) get(_ viper.RemoteProvider) (*secretsmanager.GetSecretValueOutput, error) {
+func (p *Provider) GetResult(_ viper.RemoteProvider) (*secretsmanager.GetSecretValueOutput, error) {
 	// VersionStage defaults to AWSCURRENT if unspecified
 	input := &secretsmanager.GetSecretValueInput{
 		SecretId:     aws.String(p.secretID),
@@ -115,12 +115,12 @@ func (p *Provider) get(_ viper.RemoteProvider) (*secretsmanager.GetSecretValueOu
 	if err != nil {
 		// For a list of exceptions thrown, see
 		// https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html
-		return nil, fmt.Errorf("viperaws.secrets.Provider.get: GetSecretValue %s, %w",
+		return nil, fmt.Errorf("viperaws.secrets.Provider.GetResult: GetSecretValue %s, %w",
 			p.secretID, err)
 	}
 
 	if result == nil || result.SecretString == nil || *result.SecretString == "" {
-		return nil, fmt.Errorf("viperaws.secrets.Provider.get: %s, %w",
+		return nil, fmt.Errorf("viperaws.secrets.Provider.GetResult: %s, %w",
 			p.secretID, ErrAwsSecretsEmptyValue)
 	}
 
@@ -245,7 +245,7 @@ func (p *Provider) WatchChannel(rp viper.RemoteProvider) (<-chan *viper.RemoteRe
 		for {
 			select {
 			case <-ticker.C:
-				out, err := p.get(rp)
+				out, err := p.GetResult(rp)
 				if err != nil {
 					p.l.Error("viperaws.secrets.Provider.WatchChannel",
 						"secretID", p.secretID, "err", err)
