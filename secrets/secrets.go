@@ -32,6 +32,7 @@ type Provider struct {
 	secretKey     string
 	sessionToken  string
 	versionId     string
+	updateStage   bool
 	keepStages    int
 	watchInterval time.Duration
 	quit          chan bool
@@ -43,6 +44,7 @@ type Provider struct {
 func NewConfigProvider(opts ...Option) (*Provider, error) {
 	p := &Provider{
 		region:        "us-east-1",
+		updateStage:   false,
 		keepStages:    10,
 		watchInterval: 5 * time.Second,
 		quit:          make(chan bool),
@@ -121,16 +123,19 @@ func (p *Provider) get(_ viper.RemoteProvider) (*secretsmanager.GetSecretValueOu
 		return nil, fmt.Errorf("viperaws.secrets.Provider.get: %s, %w",
 			p.secretID, ErrAwsSecretsEmptyValue)
 	}
-	// Max 20 stages
-	// https://docs.aws.amazon.com/secretsmanager/latest/userguide/reference_limits.html
-	stg := result.CreatedDate.Format("v2006.0102.150405")
-	if !slices.Contains(result.VersionStages, stg) {
-		p.cleanVersionStages()
-		p.updateSecretStage(secretsmanager.UpdateSecretVersionStageInput{
-			SecretId:        aws.String(p.secretID),
-			MoveToVersionId: result.VersionId,
-			VersionStage:    aws.String(stg),
-		})
+
+	if p.updateStage {
+		// Max 20 stages
+		// https://docs.aws.amazon.com/secretsmanager/latest/userguide/reference_limits.html
+		stg := result.CreatedDate.Format("v2006.0102.150405")
+		if !slices.Contains(result.VersionStages, stg) {
+			p.cleanVersionStages()
+			p.updateSecretStage(secretsmanager.UpdateSecretVersionStageInput{
+				SecretId:        aws.String(p.secretID),
+				MoveToVersionId: result.VersionId,
+				VersionStage:    aws.String(stg),
+			})
+		}
 	}
 
 	return result, nil

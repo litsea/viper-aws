@@ -40,6 +40,12 @@ func WithSessionToken(t string) Option {
 	}
 }
 
+func WithUpdateStage(u bool) Option {
+	return func(p *Provider) {
+		p.updateStage = u
+	}
+}
+
 func WithKeepStages(i int) Option {
 	return func(p *Provider) {
 		if i > 2 && i < 18 {
