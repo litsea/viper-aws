@@ -95,6 +95,12 @@ func (p *Provider) Get(rp viper.RemoteProvider) (io.Reader, error) {
 	return strings.NewReader(*result.SecretString), nil
 }
 
+// Get the secret values, will also update the version stages
+//
+// Required IAM policy:
+// Get the value: secretsmanager:GetSecretValue
+// Update the version stages: secretsmanager:ListSecretVersionIds,
+// secretsmanager:UpdateSecretVersionStage
 func (p *Provider) get(_ viper.RemoteProvider) (*secretsmanager.GetSecretValueOutput, error) {
 	// VersionStage defaults to AWSCURRENT if unspecified
 	input := &secretsmanager.GetSecretValueInput{
@@ -117,9 +123,6 @@ func (p *Provider) get(_ viper.RemoteProvider) (*secretsmanager.GetSecretValueOu
 	}
 	// Max 20 stages
 	// https://docs.aws.amazon.com/secretsmanager/latest/userguide/reference_limits.html
-	// IAM policy:
-	// secretsmanager:UpdateSecretVersionStage
-	// secretsmanager:
 	stg := result.CreatedDate.Format("v2006.0102.150405")
 	if !slices.Contains(result.VersionStages, stg) {
 		p.cleanVersionStages()
@@ -151,7 +154,7 @@ func (p *Provider) cleanVersionStages() {
 
 	vs := out.Versions
 
-	// The output is disorganized
+	// The original output is disorganized
 	slices.SortFunc(vs, func(a, b types.SecretVersionsListEntry) int {
 		if a.CreatedDate == nil || b.CreatedDate == nil {
 			return 0
@@ -195,7 +198,13 @@ func (p *Provider) updateSecretStage(in secretsmanager.UpdateSecretVersionStageI
 	}
 
 	if err != nil {
-		p.l.Warn(msg, "secretID", p.secretID, "stage", *in.VersionStage, "err", err)
+		// Concurrent updates cause 400 error (version stage already updated)
+		// InvalidParameterException:
+		// Staging label vx.y.z isn't currently attached to version <UUID>
+		var ee *types.InvalidParameterException
+		if !errors.As(err, &ee) {
+			p.l.Warn(msg, "secretID", p.secretID, "stage", *in.VersionStage, "err", err)
+		}
 		return
 	}
 
