@@ -1,15 +1,17 @@
 # viper-aws
 
-## Usage
-
-Examples:
-* [Basic](examples/basic/main.go)
-
 ## Remote Providers
 
 * [AWS Secrets](secrets/)
+* [AWS Parameter Store](parameterstore/)
 
-## Update secrets version stage CMD
+## Usage
+
+Examples:
+* [AWS Secrets](examples/secrets/main.go)
+* [AWS Parameter Store](examples/parameterstore/main.go)
+
+## Update Secrets version stage CMD
 
 ```shell
 # Linux & macOS
