@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/litsea/viper-aws/log"
+	"github.com/litsea/viper-aws/parameterstore"
 	"github.com/litsea/viper-aws/remote"
 	"github.com/litsea/viper-aws/secrets"
 )
@@ -74,6 +75,34 @@ func NewSecrets(v *viper.Viper, sid string, vos []Option, pos []secrets.Option) 
 	err = cfg.v.WatchRemoteConfigOnChannel()
 	if err != nil {
 		return nil, fmt.Errorf("viperaws.NewSecrets: WatchRemoteConfigOnChannel %w", err)
+	}
+
+	return cfg, nil
+}
+
+func NewParameterStore(
+	v *viper.Viper, bp string, vos []Option, pos []parameterstore.Option,
+) (*Config, error) {
+	pos = append(pos,
+		parameterstore.WithBasePath(bp),
+	)
+	p, err := parameterstore.NewConfigProvider(pos...)
+	if err != nil {
+		return nil, fmt.Errorf("viperaws.NewParameterStore: NewConfigProvider, %w", err)
+	}
+
+	vos = append(vos, WithProvider(p))
+
+	cfg := New(v, vos...)
+	cfg.v.SetConfigType("json")
+	err = cfg.Read()
+	if err != nil {
+		return nil, fmt.Errorf("viperaws.NewParameterStore: read failed, %w", err)
+	}
+
+	err = cfg.v.WatchRemoteConfigOnChannel()
+	if err != nil {
+		return nil, fmt.Errorf("viperaws.NewParameterStore: WatchRemoteConfigOnChannel %w", err)
 	}
 
 	return cfg, nil

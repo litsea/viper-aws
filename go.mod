@@ -7,7 +7,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.14
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.67
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.35.4
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.58.2
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/go-viper/mapstructure/v2 v2.2.1
 	github.com/spf13/viper v1.20.1
 )
 
@@ -22,7 +24,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.30.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.33.19 // indirect
 	github.com/aws/smithy-go v1.22.3 // indirect
-	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/rogpeppe/go-internal v1.13.1 // indirect
