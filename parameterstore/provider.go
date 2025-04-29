@@ -21,7 +21,7 @@ import (
 
 var ErrAwsSSMParametersEmpty = errors.New("AWS SSM parameters is empty")
 
-// Provider implements reads configuration from Hashicorp Vault.
+// Provider implements reads configuration from AWS Parameter Store.
 type Provider struct {
 	clt           *ssm.Client
 	region        string
@@ -104,41 +104,61 @@ func (p *Provider) Get(rp viper.RemoteProvider) (io.Reader, error) {
 // GetResult Get the parameters by basePath
 //
 // Required IAM policy:
-// Get the value: secretsmanager:GetSecretValue
-// Update the version stages: secretsmanager:ListSecretVersionIds,
-// secretsmanager:UpdateSecretVersionStage
+// Get the parameters by path: ssm:GetParametersByPath
 func (p *Provider) GetResult(_ viper.RemoteProvider) (*Parameters, error) {
-	input := &ssm.GetParametersByPathInput{
-		Path:           aws.String(p.basePath),
-		WithDecryption: aws.Bool(true),
+	getFn := func(next *string) (*ssm.GetParametersByPathOutput, error) {
+		input := &ssm.GetParametersByPathInput{
+			Path:           aws.String(p.basePath),
+			WithDecryption: aws.Bool(true),
+			MaxResults:     aws.Int32(10), // Maximum value of 10
+			NextToken:      next,
+		}
+
+		return p.clt.GetParametersByPath(context.Background(), input)
 	}
 
-	result, err := p.clt.GetParametersByPath(context.Background(), input)
-	if err != nil {
-		// For a list of exceptions thrown, see
-		// https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParametersByPath.html
-		return nil, fmt.Errorf("viperaws.parameterstore.Provider.GetResult: GetParametersByPath %s, %w",
-			p.basePath, err)
+	var next *string
+	ps := make(map[string]*Parameter)
+
+	for {
+		result, err := getFn(next)
+		if err != nil {
+			// For a list of exceptions thrown, see
+			// https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_GetParametersByPath.html
+			return nil, fmt.Errorf("viperaws.parameterstore.Provider.GetResult: GetParametersByPath %s, %w",
+				p.basePath, err)
+		}
+
+		if result == nil {
+			break
+		}
+
+		if len(result.Parameters) > 0 {
+			for _, v := range result.Parameters {
+				if v.Name == nil {
+					continue
+				}
+
+				k := strings.Replace(*v.Name, p.basePath, "", 1)
+				ps[k] = &Parameter{
+					Key:              *v.Name,
+					Value:            v.Value,
+					Version:          v.Version,
+					LastModifiedDate: *v.LastModifiedDate,
+				}
+			}
+		}
+
+		if result.NextToken == nil {
+			break
+		}
+
+		next = result.NextToken
 	}
 
-	if result == nil || len(result.Parameters) == 0 {
+	if len(ps) == 0 {
 		return nil, fmt.Errorf("viperaws.parameterstore.Provider.GetResult: %s, %w",
 			p.basePath, ErrAwsSSMParametersEmpty)
-	}
-
-	ps := make(map[string]*Parameter)
-	for _, v := range result.Parameters {
-		if v.Name == nil {
-			continue
-		}
-
-		k := strings.Replace(*v.Name, p.basePath, "", 1)
-		ps[k] = &Parameter{
-			Key:              *v.Name,
-			Value:            v.Value,
-			Version:          v.Version,
-			LastModifiedDate: *v.LastModifiedDate,
-		}
 	}
 
 	return NewParameters(p.basePath, ps), nil
@@ -223,6 +243,7 @@ func (p *Provider) getChanges(ps *Parameters) *Changes {
 				changes.Updated = append(changes.Updated, k)
 			}
 		} else {
+			// https://github.com/spf13/viper/pull/1456
 			changes.Deleted = append(changes.Deleted, k)
 		}
 	}

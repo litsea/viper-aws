@@ -23,7 +23,7 @@ import (
 
 var ErrAwsSecretsEmptyValue = errors.New("AWS Secrets value is empty")
 
-// Provider implements reads configuration from Hashicorp Vault.
+// Provider implements reads configuration from AWS Secrets Manager.
 type Provider struct {
 	clt           *secretsmanager.Client
 	region        string
