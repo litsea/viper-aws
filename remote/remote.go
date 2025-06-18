@@ -84,7 +84,9 @@ func (r *ConfigProviderRegistry) handleError(err error) {
 	}
 }
 
-//nolint:ireturn // Returns one of multiple types which implement ConfigProvider
+// getConfigProvider Returns one of multiple types which implement ConfigProvider
+//
+//nolint:ireturn,nolintlint
 func (r *ConfigProviderRegistry) getConfigProvider(rp viper.RemoteProvider) (ConfigProvider, error) {
 	provider := rp.Provider()
 	configProvider, ok := r.configProviders[provider]
