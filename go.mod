@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.35.7
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.59.3
 	github.com/fsnotify/fsnotify v1.9.0
-	github.com/go-viper/mapstructure/v2 v2.2.1
+	github.com/go-viper/mapstructure/v2 v2.3.0
 	github.com/spf13/viper v1.20.1
 )
 
