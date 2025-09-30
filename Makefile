@@ -19,7 +19,7 @@ lint-fix: check-golangci-lint
 
 .PHONY: update
 update: ## Update go.mod
-	go get -u -v
+	go get -u -v ./...
 	go mod tidy -v
 
 .PHONY: vet
